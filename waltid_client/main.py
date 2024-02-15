@@ -1,7 +1,6 @@
 import base64
 import json
 import logging
-import os
 import pprint
 from typing import Tuple
 from urllib.parse import unquote
@@ -20,13 +19,24 @@ logger = logging.getLogger("rich")
 
 @environ.config(prefix="")
 class AppConfig:
-    wallet_anchor_api_base_url = environ.var()
     issuer_api_base_url = environ.var()
+    signing_key_algorithm = environ.var(default="RSA")
+    vc_path = environ.var()
+
+    wallet_anchor_api_base_url = environ.var()
     wallet_anchor_user_name = environ.var()
     wallet_anchor_user_password = environ.var()
     wallet_anchor_user_email = environ.var()
-    signing_key_algorithm = environ.var(default="RSA")
-    vc_path = environ.var()
+
+    wallet_provider_api_base_url = environ.var()
+    wallet_provider_user_name = environ.var()
+    wallet_provider_user_password = environ.var()
+    wallet_provider_user_email = environ.var()
+
+    wallet_consumer_api_base_url = environ.var()
+    wallet_consumer_user_name = environ.var()
+    wallet_consumer_user_password = environ.var()
+    wallet_consumer_user_email = environ.var()
 
 
 def auth_login_wallet(wallet_api_base_url: str, email: str, password: str) -> str:
@@ -215,14 +225,28 @@ def main():
     cfg = environ.to_config(AppConfig)
     logger.info(cfg)
 
-    logger.info("Creating wallet user: %s", cfg.wallet_anchor_user_email)
-
-    create_wallet_user(
-        cfg.wallet_anchor_api_base_url,
-        cfg.wallet_anchor_user_name,
-        cfg.wallet_anchor_user_email,
-        cfg.wallet_anchor_user_password,
-    )
+    for item in [
+        (
+            cfg.wallet_anchor_api_base_url,
+            cfg.wallet_anchor_user_name,
+            cfg.wallet_anchor_user_email,
+            cfg.wallet_anchor_user_password,
+        ),
+        (
+            cfg.wallet_provider_api_base_url,
+            cfg.wallet_provider_user_name,
+            cfg.wallet_provider_user_email,
+            cfg.wallet_provider_user_password,
+        ),
+        (
+            cfg.wallet_consumer_api_base_url,
+            cfg.wallet_consumer_user_name,
+            cfg.wallet_consumer_user_email,
+            cfg.wallet_consumer_user_password,
+        ),
+    ]:
+        logger.info("Creating wallet user: %s", item[2])
+        create_wallet_user(*item)
 
     logger.info("Logging in wallet user: %s", cfg.wallet_anchor_user_email)
 
@@ -230,6 +254,22 @@ def main():
         cfg.wallet_anchor_api_base_url,
         cfg.wallet_anchor_user_email,
         cfg.wallet_anchor_user_password,
+    )
+
+    logger.info("Logging in wallet user: %s", cfg.wallet_provider_user_email)
+
+    provider_wallet_token = auth_login_wallet(
+        cfg.wallet_provider_api_base_url,
+        cfg.wallet_provider_user_email,
+        cfg.wallet_provider_user_password,
+    )
+
+    logger.info("Logging in wallet user: %s", cfg.wallet_consumer_user_email)
+
+    consumer_wallet_token = auth_login_wallet(
+        cfg.wallet_consumer_api_base_url,
+        cfg.wallet_consumer_user_email,
+        cfg.wallet_consumer_user_password,
     )
 
     logger.info("Generating signing key")
@@ -242,42 +282,53 @@ def main():
 
     logger.info("Anchor wallet ID: %s", anchor_wallet_id)
     logger.info("Signing key ID: %s", signing_key_id)
-
     logger.info("Exporting signing key to JWK")
 
-    signing_jwk = get_jwk_key(
+    issuer_signing_jwk = get_jwk_key(
         wallet_api_base_url=cfg.wallet_anchor_api_base_url,
         wallet_id=anchor_wallet_id,
         key_id=signing_key_id,
         wallet_token=anchor_wallet_token,
     )
 
-    logger.info("Loading VC and creating credential offer")
+    logger.info("Loading VC from disk: %s", cfg.vc_path)
 
     vc = json.load(open(cfg.vc_path))
 
+    logger.info("Creating credential offer URL")
+
     credential_offer_url = get_openid4vc_credential_offer_url(
-        jwk=signing_jwk, vc=vc, issuer_api_base_url=cfg.issuer_api_base_url
+        jwk=issuer_signing_jwk, vc=vc, issuer_api_base_url=cfg.issuer_api_base_url
     )
 
-    recipient_user_did_key = get_first_did(
-        cfg.wallet_anchor_api_base_url, anchor_wallet_token, anchor_wallet_id
+    consumer_wallet_id = get_first_wallet_id(
+        cfg.wallet_consumer_api_base_url, consumer_wallet_token
     )
 
-    logger.info("Creating offer request for recipient user: %s", recipient_user_did_key)
+    consumer_user_did_key = get_first_did(
+        cfg.wallet_consumer_api_base_url, consumer_wallet_token, consumer_wallet_id
+    )
+
+    logger.info("Using offer request with recipient user: %s", consumer_user_did_key)
 
     use_offer_request(
-        wallet_api_base_url=cfg.wallet_anchor_api_base_url,
-        wallet_id=anchor_wallet_id,
-        user_did_key=recipient_user_did_key,
-        wallet_token=anchor_wallet_token,
+        wallet_api_base_url=cfg.wallet_consumer_api_base_url,
+        wallet_id=consumer_wallet_id,
+        user_did_key=consumer_user_did_key,
+        wallet_token=consumer_wallet_token,
         credential_offer_url=credential_offer_url,
     )
 
+    logger.info(
+        "Listing credentials for wallet %s (wallet_id=%s)",
+        cfg.wallet_consumer_api_base_url,
+        consumer_wallet_id,
+    )
+
     list_credentials(
-        wallet_api_base_url=cfg.wallet_anchor_api_base_url,
-        wallet_token=anchor_wallet_token,
-        wallet_id=anchor_wallet_id,
+        wallet_api_base_url=cfg.wallet_consumer_api_base_url,
+        wallet_token=consumer_wallet_token,
+        wallet_id=consumer_wallet_id,
     )
 
 

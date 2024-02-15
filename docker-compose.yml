@@ -29,6 +29,15 @@ services:
     volumes:
       - wallet-provider-data:/waltid-wallet-api/data
       - ./config-wallet-provider:/waltid-wallet-api/config
+  wallet-consumer:
+    image: waltid/wallet-api:1.0.2402150920-SNAPSHOT
+    restart: on-failure
+    ports:
+      - "${WALTID_WALLET_CONSUMER_PUBLIC_PORT:-7051}:7001"
+    volumes:
+      - wallet-consumer-data:/waltid-wallet-api/data
+      - ./config-wallet-consumer:/waltid-wallet-api/config
 volumes:
   wallet-anchor-data: {}
   wallet-provider-data: {}
+  wallet-consumer-data: {}
