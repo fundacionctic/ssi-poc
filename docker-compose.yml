@@ -13,13 +13,22 @@ services:
       - "${WALTID_VERIFIER_PUBLIC_PORT:-7003}:7003"
     volumes:
       - ./config-verifier:/waltid-verifier-api/config
-  wallet-01:
+  wallet-anchor:
     image: waltid/wallet-api:1.0.2402150920-SNAPSHOT
     restart: on-failure
     ports:
-      - "${WALTID_WALLET_01_PUBLIC_PORT:-7001}:7001"
+      - "${WALTID_WALLET_ANCHOR_PUBLIC_PORT:-7001}:7001"
     volumes:
-      - wallet-data:/waltid-wallet-api/data
-      - ./config-wallet-01:/waltid-wallet-api/config
+      - wallet-anchor-data:/waltid-wallet-api/data
+      - ./config-wallet-anchor:/waltid-wallet-api/config
+  wallet-provider:
+    image: waltid/wallet-api:1.0.2402150920-SNAPSHOT
+    restart: on-failure
+    ports:
+      - "${WALTID_WALLET_PROVIDER_PUBLIC_PORT:-7051}:7001"
+    volumes:
+      - wallet-provider-data:/waltid-wallet-api/data
+      - ./config-wallet-provider:/waltid-wallet-api/config
 volumes:
-  wallet-data: {}
+  wallet-anchor-data: {}
+  wallet-provider-data: {}

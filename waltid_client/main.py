@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import pprint
+from typing import Tuple
 from urllib.parse import unquote
 
 import base58
@@ -19,14 +20,12 @@ logger = logging.getLogger("rich")
 
 @environ.config(prefix="")
 class AppConfig:
-    wallet_api_base_url = environ.var()
+    wallet_anchor_api_base_url = environ.var()
     issuer_api_base_url = environ.var()
-    wallet_user_name = environ.var()
-    wallet_user_password = environ.var()
-    wallet_user_email = environ.var()
+    wallet_anchor_user_name = environ.var()
+    wallet_anchor_user_password = environ.var()
+    wallet_anchor_user_email = environ.var()
     signing_key_algorithm = environ.var(default="RSA")
-    signing_key_path = environ.var()
-    signing_key_path = environ.var()
     vc_path = environ.var()
 
 
@@ -49,9 +48,9 @@ def jwk_to_did_key(jwk: dict) -> str:
     return f"did:key:{did_key}"
 
 
-def get_first_wallet_id(cfg: AppConfig, token: str) -> str:
-    headers = {"Authorization": "Bearer " + token}
-    url_accounts = cfg.wallet_api_base_url + "/wallet-api/wallet/accounts/wallets"
+def get_first_wallet_id(wallet_api_base_url: str, wallet_token: str) -> str:
+    headers = {"Authorization": "Bearer " + wallet_token}
+    url_accounts = wallet_api_base_url + "/wallet-api/wallet/accounts/wallets"
     res_accounts = requests.get(url_accounts, headers=headers)
     res_accounts.raise_for_status()
     res_accounts_json = res_accounts.json()
@@ -59,9 +58,9 @@ def get_first_wallet_id(cfg: AppConfig, token: str) -> str:
     return res_accounts_json["wallets"][0]["id"]
 
 
-def get_first_did(cfg: AppConfig, token: str, wallet_id: str) -> str:
-    headers = {"Authorization": "Bearer " + token}
-    url_dids = cfg.wallet_api_base_url + f"/wallet-api/wallet/{wallet_id}/dids"
+def get_first_did(wallet_api_base_url: str, wallet_token: str, wallet_id: str) -> str:
+    headers = {"Authorization": "Bearer " + wallet_token}
+    url_dids = wallet_api_base_url + f"/wallet-api/wallet/{wallet_id}/dids"
     res_dids = requests.get(url_dids, headers=headers)
     res_dids.raise_for_status()
     res_dids_json = res_dids.json()
@@ -69,51 +68,13 @@ def get_first_did(cfg: AppConfig, token: str, wallet_id: str) -> str:
     return res_dids_json[0]["did"]
 
 
-def create_wallet_user(cfg: AppConfig):
-    url = cfg.wallet_api_base_url + "/wallet-api/auth/create"
-
-    data = {
-        "name": cfg.wallet_user_name,
-        "email": cfg.wallet_user_email,
-        "password": cfg.wallet_user_password,
-        "type": "email",
-    }
-
-    try:
-        response = requests.post(url, json=data)
-        response.raise_for_status()
-        logger.info(response.text)
-    except requests.exceptions.HTTPError as e:
-        logger.warning("Request failed, this is expected if the user already exists.")
-
-
-def create_signing_key(cfg: AppConfig):
-    if os.path.exists(cfg.signing_key_path):
-        logger.info("Signing key already exists, skipping creation.")
-        return
-
-    token = auth_login_wallet(
-        cfg.wallet_api_base_url, cfg.wallet_user_email, cfg.wallet_user_password
-    )
-
-    headers = {"Authorization": "Bearer " + token}
-
-    wallet_id = get_first_wallet_id(cfg, token)
-
-    url_create_key = (
-        cfg.wallet_api_base_url + f"/wallet-api/wallet/{wallet_id}/keys/generate"
-    )
-
-    res_create_key = requests.post(
-        url_create_key, headers=headers, params={"algorithm": cfg.signing_key_algorithm}
-    )
-
-    res_create_key.raise_for_status()
-    key_id = res_create_key.text
-    logger.info(key_id)
+def get_jwk_key(
+    wallet_api_base_url: str, wallet_id: str, key_id: str, wallet_token: str
+) -> dict:
+    headers = {"Authorization": "Bearer " + wallet_token}
 
     url_export_key = (
-        cfg.wallet_api_base_url + f"/wallet-api/wallet/{wallet_id}/keys/export/{key_id}"
+        wallet_api_base_url + f"/wallet-api/wallet/{wallet_id}/keys/export/{key_id}"
     )
 
     res_export_key_jwk = requests.get(
@@ -124,17 +85,15 @@ def create_signing_key(cfg: AppConfig):
 
     res_export_key_jwk.raise_for_status()
     key_jwk = res_export_key_jwk.json()
-    logger.info(key_jwk)
+    logger.info(pprint.pformat(key_jwk))
 
-    with open(cfg.signing_key_path, "w") as f:
-        f.write(json.dumps(key_jwk))
+    return key_jwk
 
 
-def issue_credential(cfg: AppConfig) -> str:
-    jwk = json.load(open(cfg.signing_key_path))
+def get_openid4vc_credential_offer_url(
+    jwk: dict, vc: dict, issuer_api_base_url: str
+) -> str:
     issuance_key = {"type": "local", "jwk": json.dumps(jwk)}
-
-    vc = json.load(open(cfg.vc_path))
 
     mapping = {
         "id": "<uuid>",
@@ -153,7 +112,7 @@ def issue_credential(cfg: AppConfig) -> str:
 
     logger.info(pprint.pformat(data))
 
-    url_issue = cfg.issuer_api_base_url + "/openid4vc/jwt/issue"
+    url_issue = issuer_api_base_url + "/openid4vc/jwt/issue"
     res_issue = requests.post(url_issue, headers={"Accept": "text/plain"}, json=data)
     res_issue.raise_for_status()
     credential_offer_url = res_issue.text
@@ -168,20 +127,18 @@ def issue_credential(cfg: AppConfig) -> str:
     return credential_offer_url
 
 
-def accept_credential_offer(cfg: AppConfig, credential_offer_url: str):
-    token = auth_login_wallet(
-        cfg.wallet_api_base_url, cfg.wallet_user_email, cfg.wallet_user_password
-    )
-
-    headers = {"Authorization": "Bearer " + token}
-
-    wallet_id = get_first_wallet_id(cfg, token)
-    user_did_key = get_first_did(cfg, token, wallet_id)
-
+def use_offer_request(
+    wallet_api_base_url: str,
+    wallet_id: str,
+    user_did_key: str,
+    wallet_token: str,
+    credential_offer_url: str,
+) -> dict:
     url_use_offer_request = (
-        cfg.wallet_api_base_url
-        + f"/wallet-api/wallet/{wallet_id}/exchange/useOfferRequest"
+        wallet_api_base_url + f"/wallet-api/wallet/{wallet_id}/exchange/useOfferRequest"
     )
+
+    headers = {"Authorization": "Bearer " + wallet_token}
 
     res_use_offer_request = requests.post(
         url_use_offer_request,
@@ -194,22 +151,134 @@ def accept_credential_offer(cfg: AppConfig, credential_offer_url: str):
     res_use_offer_request_json = res_use_offer_request.json()
     logger.info(pprint.pformat(res_use_offer_request_json))
 
+    return res_use_offer_request_json
+
+
+def create_wallet_user(wallet_api_base_url: str, name: str, email: str, password: str):
+    url = wallet_api_base_url + "/wallet-api/auth/create"
+
+    data = {
+        "name": name,
+        "email": email,
+        "password": password,
+        "type": "email",
+    }
+
+    try:
+        response = requests.post(url, json=data)
+        response.raise_for_status()
+        logger.info(response.text)
+    except requests.exceptions.HTTPError as e:
+        logger.warning("Request failed, this is expected if the user already exists.")
+
+
+def generate_key(
+    wallet_api_base_url: str, wallet_token: str, algo: str = "RSA"
+) -> Tuple[str, str]:
+    wallet_id = get_first_wallet_id(wallet_api_base_url, wallet_token)
+
+    url_create_key = (
+        wallet_api_base_url + f"/wallet-api/wallet/{wallet_id}/keys/generate"
+    )
+
+    headers = {"Authorization": "Bearer " + wallet_token}
+
+    res_create_key = requests.post(
+        url_create_key, headers=headers, params={"algorithm": algo}
+    )
+
+    res_create_key.raise_for_status()
+    key_id = res_create_key.text
+    logger.info(key_id)
+
+    return (wallet_id, key_id)
+
+
+def list_credentials(
+    wallet_api_base_url: str, wallet_token: str, wallet_id: str
+) -> list:
+    headers = {"Authorization": "Bearer " + wallet_token}
+
     url_list_credentials = (
-        cfg.wallet_api_base_url + f"/wallet-api/wallet/{wallet_id}/credentials"
+        wallet_api_base_url + f"/wallet-api/wallet/{wallet_id}/credentials"
     )
 
     res_list_credentials = requests.get(url_list_credentials, headers=headers)
     res_list_credentials.raise_for_status()
-    logger.info(pprint.pformat(res_list_credentials.json()))
+    list_creds = res_list_credentials.json()
+    logger.info(pprint.pformat(list_creds))
+
+    return list_creds
 
 
 def main():
     cfg = environ.to_config(AppConfig)
     logger.info(cfg)
-    create_wallet_user(cfg)
-    create_signing_key(cfg)
-    credential_offer_url = issue_credential(cfg)
-    accept_credential_offer(cfg, credential_offer_url)
+
+    logger.info("Creating wallet user: %s", cfg.wallet_anchor_user_email)
+
+    create_wallet_user(
+        cfg.wallet_anchor_api_base_url,
+        cfg.wallet_anchor_user_name,
+        cfg.wallet_anchor_user_email,
+        cfg.wallet_anchor_user_password,
+    )
+
+    logger.info("Logging in wallet user: %s", cfg.wallet_anchor_user_email)
+
+    anchor_wallet_token = auth_login_wallet(
+        cfg.wallet_anchor_api_base_url,
+        cfg.wallet_anchor_user_email,
+        cfg.wallet_anchor_user_password,
+    )
+
+    logger.info("Generating signing key")
+
+    anchor_wallet_id, signing_key_id = generate_key(
+        wallet_api_base_url=cfg.wallet_anchor_api_base_url,
+        wallet_token=anchor_wallet_token,
+        algo=cfg.signing_key_algorithm,
+    )
+
+    logger.info("Anchor wallet ID: %s", anchor_wallet_id)
+    logger.info("Signing key ID: %s", signing_key_id)
+
+    logger.info("Exporting signing key to JWK")
+
+    signing_jwk = get_jwk_key(
+        wallet_api_base_url=cfg.wallet_anchor_api_base_url,
+        wallet_id=anchor_wallet_id,
+        key_id=signing_key_id,
+        wallet_token=anchor_wallet_token,
+    )
+
+    logger.info("Loading VC and creating credential offer")
+
+    vc = json.load(open(cfg.vc_path))
+
+    credential_offer_url = get_openid4vc_credential_offer_url(
+        jwk=signing_jwk, vc=vc, issuer_api_base_url=cfg.issuer_api_base_url
+    )
+
+    recipient_user_did_key = get_first_did(
+        cfg.wallet_anchor_api_base_url, anchor_wallet_token, anchor_wallet_id
+    )
+
+    logger.info("Creating offer request for recipient user: %s", recipient_user_did_key)
+
+    use_offer_request(
+        wallet_api_base_url=cfg.wallet_anchor_api_base_url,
+        wallet_id=anchor_wallet_id,
+        user_did_key=recipient_user_did_key,
+        wallet_token=anchor_wallet_token,
+        credential_offer_url=credential_offer_url,
+    )
+
+    list_credentials(
+        wallet_api_base_url=cfg.wallet_anchor_api_base_url,
+        wallet_token=anchor_wallet_token,
+        wallet_id=anchor_wallet_id,
+    )
 
 
 if __name__ == "__main__":
