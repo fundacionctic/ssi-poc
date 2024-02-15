@@ -301,34 +301,34 @@ def main():
         jwk=issuer_signing_jwk, vc=vc, issuer_api_base_url=cfg.issuer_api_base_url
     )
 
-    consumer_wallet_id = get_first_wallet_id(
-        cfg.wallet_consumer_api_base_url, consumer_wallet_token
+    provider_wallet_id = get_first_wallet_id(
+        cfg.wallet_provider_api_base_url, provider_wallet_token
     )
 
-    consumer_user_did_key = get_first_did(
-        cfg.wallet_consumer_api_base_url, consumer_wallet_token, consumer_wallet_id
+    provider_user_did_key = get_first_did(
+        cfg.wallet_provider_api_base_url, provider_wallet_token, provider_wallet_id
     )
 
-    logger.info("Using offer request with recipient user: %s", consumer_user_did_key)
+    logger.info("Using offer request with recipient user: %s", provider_user_did_key)
 
     use_offer_request(
-        wallet_api_base_url=cfg.wallet_consumer_api_base_url,
-        wallet_id=consumer_wallet_id,
-        user_did_key=consumer_user_did_key,
-        wallet_token=consumer_wallet_token,
+        wallet_api_base_url=cfg.wallet_provider_api_base_url,
+        wallet_id=provider_wallet_id,
+        user_did_key=provider_user_did_key,
+        wallet_token=provider_wallet_token,
         credential_offer_url=credential_offer_url,
     )
 
     logger.info(
         "Listing credentials for wallet %s (wallet_id=%s)",
-        cfg.wallet_consumer_api_base_url,
-        consumer_wallet_id,
+        cfg.wallet_provider_api_base_url,
+        provider_wallet_id,
     )
 
     list_credentials(
-        wallet_api_base_url=cfg.wallet_consumer_api_base_url,
-        wallet_token=consumer_wallet_token,
-        wallet_id=consumer_wallet_id,
+        wallet_api_base_url=cfg.wallet_provider_api_base_url,
+        wallet_token=provider_wallet_token,
+        wallet_id=provider_wallet_id,
     )
 
 
