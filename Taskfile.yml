@@ -1,0 +1,66 @@
+version: "3"
+
+vars:
+  MAIN_IP_ADDRESS:
+    sh: ip route get 1.2.3.4 | awk '{print $7}'
+  COMPOSE_PROJECT_NAME: waltidpoc
+  WALTID_WALLET_01_PUBLIC_PORT: 7001
+  WALTID_ISSUER_PUBLIC_PORT: 7002
+  WALTID_VERIFIER_PUBLIC_PORT: 7003
+  WALLET_01_USER: wallet01
+  WALLET_01_EMAIL: wallet01@example.com
+  WALLET_01_PASSWORD: wallet01
+
+env:
+  MAIN_IP_ADDRESS: "{{.MAIN_IP_ADDRESS}}"
+  COMPOSE_PROJECT_NAME: "{{.COMPOSE_PROJECT_NAME}}"
+  WALTID_WALLET_01_PUBLIC_PORT: "{{.WALTID_WALLET_01_PUBLIC_PORT}}"
+  WALTID_ISSUER_PUBLIC_PORT: "{{.WALTID_ISSUER_PUBLIC_PORT}}"
+  WALTID_VERIFIER_PUBLIC_PORT: "{{.WALTID_VERIFIER_PUBLIC_PORT}}"
+  WALLET_01_USER: "{{.WALLET_01_USER}}"
+  WALLET_01_EMAIL: "{{.WALLET_01_EMAIL}}"
+  WALLET_01_PASSWORD: "{{.WALLET_01_PASSWORD}}"
+
+dotenv: [.env, .env.default]
+
+tasks:
+  clean:
+    desc: "Clean up the project"
+    cmds:
+      - rm -rf temp-*
+      - task: down
+
+  up:
+    desc: "Start the services"
+    deps:
+      - config-all
+    cmds:
+      - docker compose up -d --build --wait
+
+  down:
+    desc: "Stop the services"
+    cmds:
+      - docker compose down -v
+
+  config-all:
+    desc: "Prepare all the configuration files"
+    cmds:
+      - >
+        envsubst < {{.ROOT_DIR}}/config-issuer/issuer-service.conf.tmpl > 
+        {{.ROOT_DIR}}/config-issuer/issuer-service.conf
+      - >
+        envsubst < {{.ROOT_DIR}}/config-verifier/verifier-service.conf.tmpl > 
+        {{.ROOT_DIR}}/config-verifier/verifier-service.conf
+
+  provision:
+    desc: "Provision the wallet"
+    env:
+      ISSUER_API_BASE_URL: http://{{.MAIN_IP_ADDRESS}}:{{.WALTID_ISSUER_PUBLIC_PORT}}
+      WALLET_API_BASE_URL: http://{{.MAIN_IP_ADDRESS}}:{{.WALTID_WALLET_01_PUBLIC_PORT}}
+      WALLET_USER_NAME: "{{.WALLET_01_USER}}"
+      WALLET_USER_PASSWORD: "{{.WALLET_01_PASSWORD}}"
+      WALLET_USER_EMAIL: "{{.WALLET_01_EMAIL}}"
+      SIGNING_KEY_PATH: "{{.ROOT_DIR}}/temp-signing-key.json"
+      VC_PATH: "{{.ROOT_DIR}}/example-vc.json"
+    cmds:
+      - poetry run python {{.ROOT_DIR}}/waltid_client/main.py

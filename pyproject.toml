@@ -1,0 +1,19 @@
+[tool.poetry]
+name = "waltid-client"
+version = "0.1.0"
+description = ""
+authors = ["Andres Garcia Mangas <andres.garcia@fundacionctic.org>"]
+readme = "README.md"
+packages = [{ include = "waltid_client" }]
+
+[tool.poetry.dependencies]
+python = "^3.8"
+rich = "^13.7.0"
+requests = "^2.31.0"
+environ-config = "^23.2.0"
+base58 = "^2.1.1"
+py-multicodec = "^0.2.1"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

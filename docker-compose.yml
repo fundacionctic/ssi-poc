@@ -1,0 +1,25 @@
+services:
+  issuer:
+    image: waltid/issuer-api:1.0.2402150920-SNAPSHOT
+    restart: on-failure
+    ports:
+      - "${WALTID_ISSUER_PUBLIC_PORT:-7002}:7002"
+    volumes:
+      - ./config-issuer:/waltid-issuer-api/config
+  verifier:
+    image: waltid/verifier-api:1.0.2402150920-SNAPSHOT
+    restart: on-failure
+    ports:
+      - "${WALTID_VERIFIER_PUBLIC_PORT:-7003}:7003"
+    volumes:
+      - ./config-verifier:/waltid-verifier-api/config
+  wallet-01:
+    image: waltid/wallet-api:1.0.2402150920-SNAPSHOT
+    restart: on-failure
+    ports:
+      - "${WALTID_WALLET_01_PUBLIC_PORT:-7001}:7001"
+    volumes:
+      - wallet-data:/waltid-wallet-api/data
+      - ./config-wallet-01:/waltid-wallet-api/config
+volumes:
+  wallet-data: {}
