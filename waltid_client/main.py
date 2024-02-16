@@ -128,7 +128,11 @@ def get_openid4vc_credential_offer_url(
 
 
 def get_openid4vp_presentation_request_url(
-    verifier_api_base_url: str, request_credentials: list
+    verifier_api_base_url: str,
+    request_credentials: list,
+    allowed_issuer_dids: Union[str, List[str]] = None,
+    vp_policies: List[str] = None,
+    vc_policies: List[str] = None,
 ) -> str:
     url_verify = verifier_api_base_url + "/openid4vc/verify"
 
@@ -138,12 +142,31 @@ def get_openid4vp_presentation_request_url(
         "responseMode": "direct_post",
     }
 
-    data = {"request_credentials": request_credentials}
+    vp_policies = vp_policies or ["signature", "expired"]
+    vc_policies = vc_policies or ["signature", "expired"]
+
+    if allowed_issuer_dids:
+        vc_policies.append(
+            {
+                "policy": "allowed-issuer",
+                "args": (
+                    allowed_issuer_dids
+                    if isinstance(allowed_issuer_dids, list)
+                    else [allowed_issuer_dids]
+                ),
+            }
+        )
+
+    data = {
+        "request_credentials": request_credentials,
+        "vp_policies": vp_policies,
+        "vc_policies": vc_policies,
+    }
 
     logger.info(
         "Requesting credentials (%s):\n%s",
         url_verify,
-        pprint.pformat(request_credentials),
+        pprint.pformat(data),
     )
 
     res_verify = requests.post(url_verify, headers=headers, json=data)
@@ -477,20 +500,20 @@ def main():
 
     logger.info("Generating signing key")
 
-    anchor_wallet_id, signing_key_id, signing_key_did = generate_key(
+    signing_key_wallet_id, signing_key_id, signing_key_did = generate_key(
         wallet_api_base_url=cfg.wallet_anchor_api_base_url,
         wallet_token=anchor_wallet_token,
         algo=cfg.signing_key_algorithm,
     )
 
-    logger.info("Anchor wallet ID: %s", anchor_wallet_id)
+    logger.info("Signing key wallet ID: %s", signing_key_wallet_id)
     logger.info("Signing key ID: %s", signing_key_id)
     logger.info("Signing key DID: %s", signing_key_did)
     logger.info("Exporting signing key to JWK")
 
     issuer_signing_jwk = get_jwk_key(
         wallet_api_base_url=cfg.wallet_anchor_api_base_url,
-        wallet_id=anchor_wallet_id,
+        wallet_id=signing_key_wallet_id,
         key_id=signing_key_id,
         wallet_token=anchor_wallet_token,
     )
@@ -569,6 +592,7 @@ def main():
     openid4vp_authorize_url = get_openid4vp_presentation_request_url(
         verifier_api_base_url=cfg.verifier_api_base_url,
         request_credentials=request_credentials,
+        allowed_issuer_dids=signing_key_did,
     )
 
     logger.info("Got OpenID4VP presentation request URL: %s", openid4vp_authorize_url)
@@ -594,6 +618,7 @@ def main():
     )
 
     assert not status_before.get("policyResults")
+    assert not status_before.get("verificationResult")
 
     share_credentials(
         signing_did_key=signing_key_did,
@@ -609,7 +634,7 @@ def main():
         presentation_url=openid4vp_authorize_url,
     )
 
-    assert status_after.get("policyResults", {}).get("policies_failed") == 0
+    assert status_after.get("verificationResult")
 
 
 if __name__ == "__main__":
