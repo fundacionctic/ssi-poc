@@ -65,6 +65,7 @@ tasks:
     desc: "Provision the wallet"
     env:
       ISSUER_API_BASE_URL: http://{{.MAIN_IP_ADDRESS}}:{{.WALTID_ISSUER_PUBLIC_PORT}}
+      VERIFIER_API_BASE_URL: http://{{.MAIN_IP_ADDRESS}}:{{.WALTID_VERIFIER_PUBLIC_PORT}}
       SIGNING_KEY_PATH: "{{.ROOT_DIR}}/temp-signing-key.json"
       VC_PATH: "{{.ROOT_DIR}}/example-vc.json"
 
