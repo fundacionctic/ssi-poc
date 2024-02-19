@@ -217,7 +217,7 @@ def find_matching_credentials(
     return matching_credentials
 
 
-def share_credentials(
+def share_credentials_with_verifier(
     signing_did_key: str,
     presentation_url: str,
     shared_credential_ids: List[str],
@@ -253,7 +253,7 @@ def share_credentials(
     return exchange_resp
 
 
-def use_offer_request(
+def accept_credential_offer(
     wallet_api_base_url: str,
     wallet_id: str,
     user_did_key: str,
@@ -393,23 +393,6 @@ def import_key(wallet_api_base_url: str, wallet_token: str, wallet_id: str, jwk:
     logger.debug(res_import.text)
 
 
-def list_credentials(
-    wallet_api_base_url: str, wallet_token: str, wallet_id: str
-) -> list:
-    headers = {"Authorization": "Bearer " + wallet_token}
-
-    url_list_credentials = (
-        wallet_api_base_url + f"/wallet-api/wallet/{wallet_id}/credentials"
-    )
-
-    res_list_credentials = requests.get(url_list_credentials, headers=headers)
-    res_list_credentials.raise_for_status()
-    list_creds = res_list_credentials.json()
-    logger.info(pprint.pformat(list_creds))
-
-    return list_creds
-
-
 def debug_wallet(wallet_api_base_url: str, wallet_token: str):
     logger.debug("Debugging wallet: %s", wallet_api_base_url)
     headers = {"Authorization": "Bearer " + wallet_token}
@@ -517,6 +500,9 @@ def main():
     cfg = environ.to_config(AppConfig)
     logger.info(cfg)
 
+    # First, we need to ensure that the wallet users exist and are logged in.
+    # Wallets are protected by username and password authentication.
+
     for item in [
         (
             cfg.wallet_anchor_api_base_url,
@@ -539,6 +525,9 @@ def main():
     ]:
         logger.info("Creating wallet user: %s", item[2])
         create_wallet_user(*item)
+
+    # There's a "WalletUser" for each wallet, which is a dataclass that holds the
+    # wallet API base URL, the token, the wallet ID, the key ID and the DID.
 
     logger.info("Logging in wallet user: %s", cfg.wallet_anchor_user_email)
 
@@ -564,26 +553,12 @@ def main():
         password=cfg.wallet_consumer_user_password,
     )
 
-    logger.info("Signing key wallet ID: %s", anchor_wallet_user.wallet_id)
-    logger.info("Signing key ID: %s", anchor_wallet_user.key_id)
-    logger.info("Signing key DID: %s", anchor_wallet_user.did)
+    # The issuer wallet user will generate a signing key and import it into the
+    # consumer and provider wallets. This key will be used to sign the VC.
 
     issuer_signing_jwk = anchor_wallet_user.get_key_as_jwk()
 
     logger.info("Signing key in JWK format:\n%s", pprint.pformat(issuer_signing_jwk))
-    logger.info("Loading VC from disk: %s", cfg.vc_path)
-
-    vc = json.load(open(cfg.vc_path))
-
-    logger.info("Creating credential offer URL")
-
-    credential_offer_url = get_openid4vc_credential_offer_url(
-        jwk=issuer_signing_jwk,
-        vc=vc,
-        issuer_api_base_url=cfg.issuer_api_base_url,
-        issuer_did=anchor_wallet_user.did,
-    )
-
     logger.info("Importing signing key to consumer and provider wallets")
 
     import_key(
@@ -600,9 +575,26 @@ def main():
         jwk=issuer_signing_jwk,
     )
 
+    # The Anchor wallet is utilized to issue Verifiable Credentials via OID4VC.
+    # Only the VCs coming from the Anchor wallet should be accepted to ensure trust.
+    # To issue a VC, the Issuer emits a "openid-credential-offer://" URL that is consumed by the Provider wallet.
+
+    logger.info("Loading VC from disk: %s", cfg.vc_path)
+
+    vc = json.load(open(cfg.vc_path))
+
+    logger.info("Creating credential offer URL")
+
+    credential_offer_url = get_openid4vc_credential_offer_url(
+        jwk=issuer_signing_jwk,
+        vc=vc,
+        issuer_api_base_url=cfg.issuer_api_base_url,
+        issuer_did=anchor_wallet_user.did,
+    )
+
     logger.info("Using offer request with recipient user: %s", provider_wallet_user.did)
 
-    use_offer_request(
+    accept_credential_offer(
         wallet_api_base_url=provider_wallet_user.wallet_api_base_url,
         wallet_id=provider_wallet_user.wallet_id,
         user_did_key=provider_wallet_user.did,
@@ -610,17 +602,9 @@ def main():
         credential_offer_url=credential_offer_url,
     )
 
-    logger.info(
-        "Listing credentials for wallet %s (wallet_id=%s)",
-        cfg.wallet_provider_api_base_url,
-        provider_wallet_user.wallet_id,
-    )
-
-    list_credentials(
-        wallet_api_base_url=provider_wallet_user.wallet_api_base_url,
-        wallet_token=provider_wallet_user.token,
-        wallet_id=provider_wallet_user.wallet_id,
-    )
+    # Any wallet can send a verification request to the Verifier API.
+    # The verification request produces a "openid4vp://authorize" presentation request URL.
+    # It is important to note that the request explicitly states that only VCs from the Anchor wallet are accepted.
 
     request_credentials = ["UniversityDegreeCredential"]
 
@@ -638,6 +622,9 @@ def main():
 
     logger.info("Got OpenID4VP presentation request URL: %s", openid4vp_authorize_url)
 
+    # To fulfil a presentation request, the "openid4vp://authorize" URL is passed to the wallet.
+    # This returns a list of matching credentials that can be shared with the Verifier.
+
     logger.info(
         "Looking for matching credentials in %s",
         provider_wallet_user.wallet_api_base_url,
@@ -652,6 +639,10 @@ def main():
     )
 
     logger.info("Found matching credentials:\n%s", pprint.pformat(matching_creds))
+
+    # The matching credentials are shared with the Verifier,
+    # which will then run all the verification policies (e.g. check allowed issuers).
+
     logger.info("Sharing credentials from %s", provider_wallet_user.wallet_api_base_url)
 
     status_before = get_verification_status(
@@ -662,7 +653,7 @@ def main():
     assert not status_before.get("policyResults")
     assert not status_before.get("verificationResult")
 
-    share_credentials(
+    share_credentials_with_verifier(
         signing_did_key=anchor_wallet_user.did,
         presentation_url=openid4vp_authorize_url,
         shared_credential_ids=[matching_creds["id"]],
@@ -670,6 +661,9 @@ def main():
         wallet_token=provider_wallet_user.token,
         wallet_id=provider_wallet_user.wallet_id,
     )
+
+    # The other part of the communication can utilize the "openid4vp://authorize" URL
+    # to check whether the presentation has been fulfilled and verified.
 
     status_after = get_verification_status(
         verifier_api_base_url=cfg.verifier_api_base_url,
